@@ -18,6 +18,7 @@ import (
 
 	"github.com/emirpasic/gods/lists/doublylinkedlist"
 	"github.com/emirpasic/gods/sets/hashset"
+	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
@@ -460,8 +461,8 @@ func (b *ConfigBuilder) SetupFrontend() *ConfigBuilder {
 	return b
 }
 
-// GetBackendByContext : 按照context中的结果表shipper配置，得到该结果表的写入后端processor
-func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
+// GetBackendByContextFields : 按照context中的结果表shipper配置，得到该结果表的写入后端processor
+func (b *ConfigBuilder) GetBackendByContextFields(ctx context.Context, f *define.ETLRecordFields) (Node, error) {
 	rt := config.ResultTableConfigFromContext(ctx)
 	processors := make([]Node, 0, len(rt.ShipperList))
 	for _, s := range rt.ShipperList {
@@ -473,6 +474,9 @@ func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
 		backend, err := define.NewBackend(shipperCtx, s.ClusterType)
 		if err != nil {
 			return nil, errors.Wrapf(err, "create backend by type %v", s.ClusterType)
+		}
+		if f != nil {
+			backend.SetETLRecordFields(f)
 		}
 
 		ctx, cancel := context.WithCancel(ctx)
@@ -488,6 +492,11 @@ func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
 	default:
 		return NewChainConnector(ctx, processors), nil
 	}
+}
+
+// GetBackendByContext : 按照context中的结果表shipper配置，得到该结果表的写入后端processor
+func (b *ConfigBuilder) GetBackendByContext(ctx context.Context) (Node, error) {
+	return b.GetBackendByContextFields(ctx, nil)
 }
 
 // DataProcessor :
@@ -623,7 +632,7 @@ log_cluster_config:
     conditions:
     - key: log_type
       op: eq
-      value: ["foo", "bar"]
+      value: ["foo", "bar"] // a or b
     - key: log_category
       op: nq
       value: ["foo", "bar"]
@@ -636,14 +645,35 @@ log_cluster_config:
      timeout: 10s
      retry: 3
 
-   backend_filter:
+   backend_fields:
      raw_es:
-       dimensions: ["my_dim1", "my_dim2"]
+       dimensions: ["my_dim1", "my_dim2", "gse_index", balabala...]
        metrics: ["log"]
      pattern_es:
-       dimensions: ["my_dim1", "my_dim2"]
+       dimensions: ["my_dim1", "my_dim2", "gse_index", balabala...]
 	   metrics: ["log"]
 */
+
+type BackendFields struct {
+	RawES     *define.ETLRecordFields `json:"raw_es" mapstructure:"raw_es"`
+	PatternES *define.ETLRecordFields `json:"pattern_es" mapstructure:"pattern_es"`
+}
+
+// getBackendFields 调用方需要自行判断其属性是否为空
+func (b *ConfigBuilder) getBackendFields(opts map[string]interface{}) BackendFields {
+	conf, ok := opts[config.PipelineConfigOptLogClusterConfig]
+	if !ok {
+		return BackendFields{}
+	}
+
+	type T struct {
+		BackendFields BackendFields `json:"backend_fields"`
+	}
+
+	var t T
+	_ = mapstructure.Decode(conf, &t)
+	return t.BackendFields
+}
 
 func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...ContextBuilderBranchingCallback) (*Pipeline, error) {
 	ctx := b.ctx
@@ -662,6 +692,7 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 
 	conf := config.FromContext(ctx)
 	strictMode := conf.GetBool(define.ConfPipelineStrictMode)
+	fields := b.getBackendFields(pipeConfig.Option)
 
 	// 日志聚类会从单个数据源派生出多个分支
 	// 但此流程只会在内部处理 共用同一个数据源
@@ -686,8 +717,8 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 		b.PipeConfigInitFn(pipeConfig)
 	}
 
-	buildBackend := func(subCtx context.Context, rt *config.MetaResultTableConfig) (Node, error) {
-		backend, err := b.GetBackendByContext(subCtx)
+	buildBackend := func(subCtx context.Context, rt *config.MetaResultTableConfig, f *define.ETLRecordFields) (Node, error) {
+		backend, err := b.GetBackendByContextFields(subCtx, f)
 		if err != nil {
 			if strictMode {
 				return nil, errors.Wrapf(err, "get result table %s backend failed", rt.ResultTable)
@@ -743,7 +774,7 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	ctx0 := config.ResultTableConfigIntoContext(ctx, rt0)
 	cb0 := callbacks[0]
 
-	backend0, err := buildBackend(ctx0, rt0)
+	backend0, err := buildBackend(ctx0, rt0, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -758,11 +789,11 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	rt1 := pipeConfig.ResultTableList[1]
 	cb1 := callbacks[1]
 	ctx1 := config.ResultTableConfigIntoContext(ctx, rt1)
-	backend0, err = buildBackend(ctx1, rt0) // 聚类结构与原始日志数据共享同一个后端 ES
+	backend0, err = buildBackend(ctx1, rt0, fields.RawES) // 聚类结构与原始日志数据共享同一个后端 ES
 	if err != nil {
 		return nil, err
 	}
-	backend1, err := buildBackend(ctx1, rt1)
+	backend1, err := buildBackend(ctx1, rt1, fields.PatternES)
 	if err != nil {
 		return nil, err
 	}

@@ -40,6 +40,7 @@ type BulkHandler struct {
 	writer        BulkWriter
 	indexRender   IndexRenderFn
 	transformers  map[string]etl.TransformFn
+	fields        *define.ETLRecordFields
 }
 
 func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
@@ -100,6 +101,9 @@ func (b *BulkHandler) Handle(ctx context.Context, payload define.Payload, killCh
 		}
 	}
 
+	if b.fields != nil {
+		etlRecord = b.fields.Filter(etlRecord)
+	}
 	return &etlRecord, utils.ParseTimeStamp(*etlRecord.Time), true
 }
 
@@ -211,6 +215,10 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 	}
 
 	return count, errs.AsError()
+}
+
+func (b *BulkHandler) SetETLRecordFields(f *define.ETLRecordFields) {
+	b.fields = f
 }
 
 // Close :

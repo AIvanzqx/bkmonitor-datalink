@@ -18,6 +18,8 @@ import (
 // Gluttonous :
 type Gluttonous struct{}
 
+func (g *Gluttonous) SetETLRecordFields(f *define.ETLRecordFields) {}
+
 // Process : process data
 func (g *Gluttonous) Process(p define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
 }

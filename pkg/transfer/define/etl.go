@@ -10,8 +10,11 @@
 package define
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/bufferpool"
+	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/types"
@@ -63,6 +66,48 @@ type ETLRecord struct {
 	// 对于日志数据而言，指标和维度到最后都是一视同仁的写入到ES，由ES的meta控制
 	Metrics  map[string]interface{} `json:"metrics"`
 	Exemplar map[string]interface{} `json:"exemplar"`
+}
+
+type ETLRecordFields struct {
+	Metrics    []string `json:"metrics" mapstructure:"metrics"`
+	Dimensions []string `json:"dimensions" mapstructure:"dimensions"`
+	GroupKeys  []string `json:"group_keys" mapstructure:"group_keys"`
+}
+
+func (f *ETLRecordFields) Filter(record ETLRecord) ETLRecord {
+	newRecord := ETLRecord{
+		Time:     record.Time,
+		Exemplar: record.Exemplar,
+	}
+
+	for _, k := range f.Metrics {
+		v, ok := record.Metrics[k]
+		if ok {
+			newRecord.Metrics[k] = v
+		}
+	}
+	for _, k := range f.Dimensions {
+		v, ok := record.Dimensions[k]
+		if ok {
+			newRecord.Dimensions[k] = v
+		}
+	}
+	return newRecord
+}
+
+func (f *ETLRecordFields) GroupID(dims map[string]interface{}) uint64 {
+	buf := bufferpool.Get()
+	defer bufferpool.Put(buf)
+
+	for _, key := range f.GroupKeys {
+		v, ok := dims[key]
+		if !ok {
+			continue
+		}
+		buf.WriteString(key + "/")
+		fmt.Fprintf(buf, "%s/", v)
+	}
+	return xxhash.Sum64(buf.Bytes())
 }
 
 type GroupETLRecord struct {
