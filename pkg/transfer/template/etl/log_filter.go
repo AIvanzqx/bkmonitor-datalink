@@ -11,30 +11,68 @@ package etl
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
 type LogFilter struct {
 	*define.BaseDataProcessor
 	*define.ProcessorMonitor
+
+	rules []*utils.MatchRule
 }
 
 func (p *LogFilter) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
-	outputChan <- d
-	logging.Info("mandotest: process in log_filter")
+	var dst define.ETLRecord
+	if err := d.To(&dst); err != nil {
+		p.CounterFails.Inc()
+		logging.Errorf("payload %v to record failed: %v", d, err)
+		return
+	}
+
+	matched := utils.IsRulesMatch(p.rules, map[string]interface{}{
+		"dimensions": dst.Dimensions,
+		"metrics":    dst.Metrics,
+	})
+
+	// 符合匹配规则才需要向后传递
+	if matched {
+		outputChan <- d
+		p.CounterSuccesses.Inc()
+		return
+	}
+	p.CounterFails.Inc()
 }
 
-// NewLogFilter :
 func NewLogFilter(ctx context.Context, name string) (*LogFilter, error) {
+	rtOption := config.PipelineConfigFromContext(ctx).Option
+	obj, ok := rtOption["log_filter"]
+	if !ok {
+		return nil, nil
+	}
+
+	rules, ok := obj.([]*utils.MatchRule)
+	if !ok {
+		return nil, errors.Errorf("excepted type []*utils.MatchRule, but go %T", obj)
+	}
+
+	for i := 0; i < len(rules); i++ {
+		if err := rules[i].Init(); err != nil {
+			return nil, err
+		}
+	}
+
 	return &LogFilter{
 		BaseDataProcessor: define.NewBaseDataProcessor(name),
 		ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, config.PipelineConfigFromContext(ctx)),
+		rules:             rules,
 	}, nil
 }
 
@@ -44,6 +82,12 @@ func init() {
 		if pipeConfig == nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "pipeline config is empty")
 		}
+		rtConfig := config.ResultTableConfigFromContext(ctx)
+		if pipeConfig == nil {
+			return nil, errors.Wrapf(define.ErrOperationForbidden, "result table config is empty")
+		}
+		rtName := rtConfig.ResultTable
+		name = fmt.Sprintf("%s:%s", name, rtName)
 		return NewLogFilter(ctx, pipeConfig.FormatName(name))
 	})
 }

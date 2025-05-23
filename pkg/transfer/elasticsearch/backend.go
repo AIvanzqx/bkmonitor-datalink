@@ -40,7 +40,9 @@ type BulkHandler struct {
 	writer        BulkWriter
 	indexRender   IndexRenderFn
 	transformers  map[string]etl.TransformFn
-	fields        *define.ETLRecordFields
+
+	fields       *define.ETLRecordFields
+	isLogCluster bool
 }
 
 func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
@@ -174,6 +176,10 @@ func (b *BulkHandler) flush(ctx context.Context, index string, records Records) 
 	return count, errs.AsError()
 }
 
+func (b *BulkHandler) grouping(records Records) Records {
+	return records
+}
+
 // Flush :
 func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count int, err error) {
 	lastIndex := ""
@@ -199,7 +205,7 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 
 		// 处理跨时间间隔
 		if index != lastIndex && lastIndex != "" {
-			cnt, err := b.flush(ctx, lastIndex, records)
+			cnt, err := b.flush(ctx, lastIndex, b.grouping(records))
 			records = records[:0]
 			count += cnt
 			errs.Add(err)
@@ -209,7 +215,7 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 	}
 
 	if len(records) > 0 {
-		cnt, err := b.flush(ctx, lastIndex, records)
+		cnt, err := b.flush(ctx, lastIndex, b.grouping(records))
 		count += cnt
 		errs.Add(err)
 	}
@@ -276,7 +282,7 @@ func NewBulkHandler(cluster *config.ElasticSearchMetaClusterInfo, table *config.
 }
 
 // NewBackend :
-func NewBackend(ctx context.Context, name string, maxQps int) (define.Backend, error) {
+func NewBackend(ctx context.Context, name string, options *utils.MapHelper) (define.Backend, error) {
 	conf := config.FromContext(ctx)
 	resultTable := config.ResultTableConfigFromContext(ctx)
 
@@ -308,6 +314,12 @@ func NewBackend(ctx context.Context, name string, maxQps int) (define.Backend, e
 		return nil, err
 	}
 
+	isLogCluster, _ := options.GetBool(config.PipelineConfigOptIsLogCluster)
+	if isLogCluster {
+		//bulk.isLogCluster = true
+	}
+
+	maxQps, _ := options.GetInt(config.PipelineConfigOptMaxQps)
 	return pipeline.NewBulkBackendDefaultAdapter(ctx, name, bulk, maxQps), nil
 }
 
@@ -326,7 +338,6 @@ func init() {
 		}
 
 		options := utils.NewMapHelper(rt.Option)
-		maxQps, _ := options.GetInt(config.PipelineConfigOptMaxQps)
-		return NewBackend(ctx, rt.FormatName(name), maxQps)
+		return NewBackend(ctx, rt.FormatName(name), options)
 	})
 }

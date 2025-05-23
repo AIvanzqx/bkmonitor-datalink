@@ -10,32 +10,236 @@
 package etl
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"sync"
+	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 )
+
+type LogClusterConfig struct {
+	Address   string `mapstructure:"address" json:"address"`
+	Timeout   string `mapstructure:"timeout" json:"timeout"`
+	Retry     int    `mapstructure:"retry" json:"retry"`
+	BatchSize int    `mapstructure:"batch_size" json:"batch_size"`
+}
+
+func (c LogClusterConfig) GetTimeout() time.Duration {
+	if c.Timeout == "" {
+		return time.Minute
+	}
+
+	v, err := time.ParseDuration(c.Timeout)
+	if err != nil || v <= 0 {
+		return time.Minute
+	}
+	return v
+}
+
+func (c LogClusterConfig) GetBatchSize() int {
+	if c.BatchSize <= 0 {
+		return 1000
+	}
+	return c.BatchSize
+}
 
 type LogCluster struct {
 	*define.BaseDataProcessor
 	*define.ProcessorMonitor
+
+	conf  LogClusterConfig
+	queue *innerQueue
+	cli   *http.Client
+	mut   sync.Mutex
+}
+
+type innerQueue struct {
+	size int
+	q    []*define.ETLRecord
+}
+
+func (iq *innerQueue) Push(record *define.ETLRecord) bool {
+	iq.q = append(iq.q, record)
+	return len(iq.q) >= iq.size
+}
+
+func (iq *innerQueue) Pop() []*define.ETLRecord {
+	q := iq.q
+	iq.q = make([]*define.ETLRecord, 0)
+	return q
+}
+
+type LogClusterRequest struct {
+	Index     string `json:"__index__"`
+	Log       string `json:"log"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+type LogClusterResponse struct {
+	Index        string `json:"__index__"`
+	ID           string `json:"__id__"`
+	GroupID      string `json:"__group_id__"`
+	LogSignature string `json:"log_signature"`
+	Pattern      string `json:"pattern"`
+	IsNew        int    `json:"is_new"`
 }
 
 func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
-	outputChan <- d
-	logging.Info("mandotest: process in log_cluster")
+	p.mut.Lock() // 此 processor 会触发虚拟的 Process 事件 即有可能并发调用的情况 因此这里需要有个锁保护
+	defer p.mut.Unlock()
+
+	handle := func() error {
+		batch := p.queue.Pop()
+		rsp, err := p.doRequest(batch)
+		if err != nil {
+			return err
+		}
+
+		for _, record := range rsp {
+			output, err := define.DerivePayload(d, &record)
+			if err != nil {
+				logging.Errorf("%v create payload from %v error: %+v", p, d, err)
+				continue
+			}
+			outputChan <- output
+		}
+		return nil
+	}
+
+	// 虚拟 Process 充当信号使用
+	if d == nil {
+		if err := handle(); err != nil {
+			p.CounterFails.Inc()
+		} else {
+			p.CounterSuccesses.Inc()
+		}
+		return
+	}
+
+	var dst define.ETLRecord
+	if err := d.To(&dst); err != nil {
+		p.CounterFails.Inc()
+		logging.Errorf("payload %v to record failed: %v", d, err)
+		return
+	}
+
+	full := p.queue.Push(&dst)
+	if !full {
+		return
+	}
+
+	if err := handle(); err != nil {
+		p.CounterFails.Inc()
+	} else {
+		p.CounterSuccesses.Inc()
+	}
 }
 
-// NewLogCluster :
+func (p *LogCluster) getLogField(metrics map[string]interface{}) string {
+	if metrics == nil {
+		return ""
+	}
+
+	log, ok := metrics["log"]
+	if !ok {
+		return ""
+	}
+
+	s, ok := log.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+func (p *LogCluster) doRequest(records []*define.ETLRecord) ([]*define.ETLRecord, error) {
+	items := make([]LogClusterRequest, 0, len(records))
+	for i, record := range records {
+		items = append(items, LogClusterRequest{
+			Index:     strconv.Itoa(i),
+			Log:       p.getLogField(record.Metrics),
+			Timestamp: *record.Time,
+		})
+	}
+
+	b, err := json.Marshal(map[string]interface{}{"data": items})
+	if err != nil {
+		return nil, err
+	}
+
+	rsp, err := p.cli.Post(p.conf.Address, "application/json", bytes.NewBuffer(b))
+	if err != nil {
+		return nil, err
+	}
+	defer rsp.Body.Close()
+
+	body, err := io.ReadAll(rsp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	type Response struct {
+		Data []LogClusterResponse `json:"data"`
+	}
+	var r Response
+	err = json.Unmarshal(body, &r)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(r.Data) != len(records) {
+		return nil, errors.New("records length not match")
+	}
+
+	for i := 0; i < len(records); i++ {
+		records[i].Dimensions["__signature"] = r.Data[i].LogSignature
+		records[i].Dimensions["__pattern"] = r.Data[i].Pattern
+		records[i].Dimensions["__is_new"] = strconv.Itoa(r.Data[i].IsNew)
+	}
+	return records, nil
+}
+
 func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
-	return &LogCluster{
+	rtOption := config.PipelineConfigFromContext(ctx).Option
+	obj, ok := rtOption["log_cluster"]
+	if !ok {
+		return nil, nil
+	}
+
+	conf, ok := obj.(LogClusterConfig)
+	if !ok {
+		return nil, errors.Errorf("excepted type LogClusterConfig, but go %T", obj)
+	}
+	_, err := url.Parse(conf.Address)
+	if err != nil {
+		return nil, err
+	}
+
+	p := &LogCluster{
 		BaseDataProcessor: define.NewBaseDataProcessor(name),
 		ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, config.PipelineConfigFromContext(ctx)),
-	}, nil
+		conf:              conf,
+		queue: &innerQueue{
+			size: conf.GetBatchSize(),
+		},
+		cli: &http.Client{
+			Timeout: conf.GetTimeout(),
+		},
+	}
+	p.SetPoll(time.Second)
+	return p, nil
 }
 
 func init() {
@@ -44,6 +248,12 @@ func init() {
 		if pipeConfig == nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "pipeline config is empty")
 		}
+		rtConfig := config.ResultTableConfigFromContext(ctx)
+		if pipeConfig == nil {
+			return nil, errors.Wrapf(define.ErrOperationForbidden, "result table config is empty")
+		}
+		rtName := rtConfig.ResultTable
+		name = fmt.Sprintf("%s:%s", name, rtName)
 		return NewLogCluster(ctx, pipeConfig.FormatName(name))
 	})
 }
