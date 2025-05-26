@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
@@ -53,14 +54,19 @@ func (p *LogFilter) Process(d define.Payload, outputChan chan<- define.Payload, 
 
 func NewLogFilter(ctx context.Context, name string) (*LogFilter, error) {
 	rtOption := config.PipelineConfigFromContext(ctx).Option
-	obj, ok := rtOption["log_filter"]
+	obj, ok := rtOption["log_cluster_config"]
+	if !ok {
+		return nil, nil
+	}
+	conf, ok := obj.(map[string]interface{})
 	if !ok {
 		return nil, nil
 	}
 
-	rules, ok := obj.([]*utils.MatchRule)
-	if !ok {
-		return nil, errors.Errorf("excepted type []*utils.MatchRule, but go %T", obj)
+	var rules []*utils.MatchRule
+	err := mapstructure.Decode(conf["log_filter"], &rules)
+	if err != nil {
+		return nil, err
 	}
 
 	for i := 0; i < len(rules); i++ {

@@ -41,8 +41,7 @@ type BulkHandler struct {
 	indexRender   IndexRenderFn
 	transformers  map[string]etl.TransformFn
 
-	fields       *define.ETLRecordFields
-	isLogCluster bool
+	fields *define.ETLRecordFields
 }
 
 func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
@@ -177,7 +176,21 @@ func (b *BulkHandler) flush(ctx context.Context, index string, records Records) 
 }
 
 func (b *BulkHandler) grouping(records Records) Records {
-	return records
+	if b.fields == nil || len(b.fields.GroupKeys) <= 0 {
+		return records
+	}
+
+	uniq := make(map[uint64]*Record)
+	for _, record := range records {
+		uid := b.fields.GroupID(record.Document)
+		uniq[uid] = record
+	}
+
+	dst := make(Records, 0, len(uniq))
+	for _, item := range uniq {
+		dst = append(dst, item)
+	}
+	return dst
 }
 
 // Flush :
@@ -312,11 +325,6 @@ func NewBackend(ctx context.Context, name string, options *utils.MapHelper) (def
 	bulk, err := NewBulkHandler(cluster, resultTable, flushInterval, uniqueFields, fn)
 	if err != nil {
 		return nil, err
-	}
-
-	isLogCluster, _ := options.GetBool(config.PipelineConfigOptIsLogCluster)
-	if isLogCluster {
-		//bulk.isLogCluster = true
 	}
 
 	maxQps, _ := options.GetInt(config.PipelineConfigOptMaxQps)

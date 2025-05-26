@@ -95,12 +95,12 @@ func (f *ETLRecordFields) Filter(record ETLRecord) ETLRecord {
 	return newRecord
 }
 
-func (f *ETLRecordFields) GroupID(dims map[string]interface{}) uint64 {
+func (f *ETLRecordFields) GroupID(document map[string]interface{}) uint64 {
 	buf := bufferpool.Get()
 	defer bufferpool.Put(buf)
 
 	for _, key := range f.GroupKeys {
-		v, ok := dims[key]
+		v, ok := document[key]
 		if !ok {
 			continue
 		}

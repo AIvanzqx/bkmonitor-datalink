@@ -624,39 +624,9 @@ func (b *ConfigBuilder) BuildBranching(from Node, allowGluttonous bool, callback
 	return b.Finish() // 返回一个 NewPipeline(b.context, b.name, exists)
 }
 
-/*
-is_log_cluster: true|false
-
-log_cluster_config:
-  log_filter:
-    conditions:
-    - key: log_type
-      op: eq
-      value: ["foo", "bar"] // a or b
-    - key: log_category
-      op: nq
-      value: ["foo", "bar"]
-    - key: log_name
-      op: contains
-      value: ["foo", "bar"]
-
-   log_cluster:
-     address: 127.0.0.1:8080/foo/bar
-     timeout: 10s
-     retry: 3
-
-   backend_fields:
-     raw_es:
-       dimensions: ["my_dim1", "my_dim2", "gse_index", balabala...]
-       metrics: ["log"]
-     pattern_es:
-       dimensions: ["my_dim1", "my_dim2", "gse_index", balabala...]
-	   metrics: ["log"]
-*/
-
 type BackendFields struct {
-	RawES     *define.ETLRecordFields `json:"raw_es" mapstructure:"raw_es"`
-	PatternES *define.ETLRecordFields `json:"pattern_es" mapstructure:"pattern_es"`
+	RawES     define.ETLRecordFields `json:"raw_es" mapstructure:"raw_es"`
+	PatternES define.ETLRecordFields `json:"pattern_es" mapstructure:"pattern_es"`
 }
 
 // getBackendFields 调用方需要自行判断其属性是否为空
@@ -669,7 +639,6 @@ func (b *ConfigBuilder) getBackendFields(opts map[string]interface{}) BackendFie
 	type T struct {
 		BackendFields BackendFields `json:"backend_fields"`
 	}
-
 	var t T
 	_ = mapstructure.Decode(conf, &t)
 	return t.BackendFields
@@ -685,7 +654,7 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	pipeOpts := utils.NewMapHelper(pipeConfig.Option)
 	isLogCluster, _ := pipeOpts.GetBool(config.PipelineConfigOptIsLogCluster)
 	if !isLogCluster {
-		pipeConfig.ResultTableList = pipeConfig.ResultTableList[:1]
+		pipeConfig.ResultTableList = pipeConfig.ResultTableList[:1] // 避免写入两个 ES
 		config.PipelineConfigIntoContext(b.ctx, pipeConfig)
 		return b.BuildBranching(from, true, callbacks[0])
 	}
@@ -785,15 +754,14 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	// [1]: bk_log_cluster
 	//
 	// 日志聚类处理逻辑 需要构造一个虚拟的 fanout 后端 同时写入两个 ES
-	// TODO(mando): 此后端需要有过滤字段的能力
 	rt1 := pipeConfig.ResultTableList[1]
 	cb1 := callbacks[1]
 	ctx1 := config.ResultTableConfigIntoContext(ctx, rt1)
-	backend0, err = buildBackend(ctx1, rt0, fields.RawES) // 聚类结构与原始日志数据共享同一个后端 ES
+	backend0, err = buildBackend(ctx1, rt0, &fields.RawES) // 聚类结构与原始日志数据共享同一个后端 ES
 	if err != nil {
 		return nil, err
 	}
-	backend1, err := buildBackend(ctx1, rt1, fields.PatternES)
+	backend1, err := buildBackend(ctx1, rt1, &fields.PatternES)
 	if err != nil {
 		return nil, err
 	}
@@ -803,5 +771,5 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	}
 
 	logging.Debugf("pipeline %v layout: %v", pipeConfig.DataID, b)
-	return b.Finish() // 返回一个 NewPipeline(b.context, b.name, exists)
+	return b.Finish()
 }

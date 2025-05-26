@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
@@ -30,10 +31,11 @@ import (
 )
 
 type LogClusterConfig struct {
-	Address   string `mapstructure:"address" json:"address"`
-	Timeout   string `mapstructure:"timeout" json:"timeout"`
-	Retry     int    `mapstructure:"retry" json:"retry"`
-	BatchSize int    `mapstructure:"batch_size" json:"batch_size"`
+	Address      string `mapstructure:"address" json:"address"`
+	Timeout      string `mapstructure:"timeout" json:"timeout"`
+	Retry        int    `mapstructure:"retry" json:"retry"`
+	BatchSize    int    `mapstructure:"batch_size" json:"batch_size"`
+	PollInterval string `mapstructure:"poll_interval" json:"poll_interval"`
 }
 
 func (c LogClusterConfig) GetTimeout() time.Duration {
@@ -48,7 +50,20 @@ func (c LogClusterConfig) GetTimeout() time.Duration {
 	return v
 }
 
+func (c LogClusterConfig) GetPollInterval() time.Duration {
+	if c.PollInterval == "" {
+		return time.Second
+	}
+
+	v, err := time.ParseDuration(c.PollInterval)
+	if err != nil || v <= 0 {
+		return time.Second
+	}
+	return v
+}
+
 func (c LogClusterConfig) GetBatchSize() int {
+	return 1
 	if c.BatchSize <= 0 {
 		return 1000
 	}
@@ -102,6 +117,10 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 
 	handle := func() error {
 		batch := p.queue.Pop()
+		if len(batch) == 0 {
+			return nil
+		}
+
 		rsp, err := p.doRequest(batch)
 		if err != nil {
 			return err
@@ -213,16 +232,22 @@ func (p *LogCluster) doRequest(records []*define.ETLRecord) ([]*define.ETLRecord
 
 func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
 	rtOption := config.PipelineConfigFromContext(ctx).Option
-	obj, ok := rtOption["log_cluster"]
+	v, ok := rtOption["log_cluster_config"]
+	if !ok {
+		return nil, nil
+	}
+	obj, ok := v.(map[string]interface{})
 	if !ok {
 		return nil, nil
 	}
 
-	conf, ok := obj.(LogClusterConfig)
-	if !ok {
-		return nil, errors.Errorf("excepted type LogClusterConfig, but go %T", obj)
+	var conf LogClusterConfig
+	err := mapstructure.Decode(obj["log_cluster"], &conf)
+	if err != nil {
+		return nil, err
 	}
-	_, err := url.Parse(conf.Address)
+
+	_, err = url.Parse(conf.Address)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +263,7 @@ func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
 			Timeout: conf.GetTimeout(),
 		},
 	}
-	p.SetPoll(time.Second)
+	p.SetPoll(conf.GetPollInterval())
 	return p, nil
 }
 
