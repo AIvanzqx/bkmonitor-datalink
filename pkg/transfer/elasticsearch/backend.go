@@ -214,7 +214,7 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 			continue
 		}
 
-		logging.Errorf("mandotest: backend %v flush (%#v) to index %s", b, record, index)
+		//logging.Errorf("mandotest: backend %v flush (%#v) to index %s", b, record, index)
 
 		logging.Debugf("backend %v ready to flush record %#v to index %s", b, record, index)
 
@@ -348,6 +348,8 @@ func init() {
 		}
 
 		options := utils.NewMapHelper(rt.Option)
+
+		logging.Errorf("mandotest: create elasticsearch backend %s, options: %#v, rt: %#v", rt.FormatName(name), options, rt)
 		return NewBackend(ctx, rt.FormatName(name), options)
 	})
 }
