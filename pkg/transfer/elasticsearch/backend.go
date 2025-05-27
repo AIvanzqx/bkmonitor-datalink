@@ -103,9 +103,7 @@ func (b *BulkHandler) Handle(ctx context.Context, payload define.Payload, killCh
 	}
 
 	if b.fields != nil {
-		//logging.Errorf("mandotest: [1](%#v)", etlRecord)
 		etlRecord = b.fields.Filter(etlRecord)
-		//logging.Errorf("mandotest: [2](%#v)", etlRecord)
 	}
 	return &etlRecord, utils.ParseTimeStamp(*etlRecord.Time), true
 }
@@ -216,8 +214,6 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 			continue
 		}
 
-		logging.Errorf("mandotest: backend %v render index for %#v index %v", b, record, index)
-
 		logging.Debugf("backend %v ready to flush record %#v to index %s", b, record, index)
 
 		// 处理跨时间间隔
@@ -241,9 +237,6 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 }
 
 func (b *BulkHandler) SetETLRecordFields(f *define.ETLRecordFields) {
-	if f != nil {
-		logging.Errorf("mandotest: set fields: %#v", *f)
-	}
 	b.fields = f
 }
 

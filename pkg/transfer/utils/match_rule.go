@@ -13,10 +13,11 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/cstockton/go-conv"
 	"github.com/jmespath/go-jmespath"
 	"github.com/pkg/errors"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 )
 
 const (

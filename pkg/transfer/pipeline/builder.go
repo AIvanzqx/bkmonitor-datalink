@@ -663,7 +663,6 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	conf := config.FromContext(ctx)
 	strictMode := conf.GetBool(define.ConfPipelineStrictMode)
 	fields := b.getBackendFields(pipeConfig.Option)
-	logging.Errorf("mandotest: getBackendFields")
 
 	// 日志聚类会从单个数据源派生出多个分支
 	// 但此流程只会在内部处理 共用同一个数据源
