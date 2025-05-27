@@ -214,6 +214,8 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 			continue
 		}
 
+		logging.Errorf("mandotest: backend %v flush (%#v) to index %s", b, record, index)
+
 		logging.Debugf("backend %v ready to flush record %#v to index %s", b, record, index)
 
 		// 处理跨时间间隔

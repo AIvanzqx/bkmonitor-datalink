@@ -747,34 +747,33 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	if err != nil {
 		return nil, err
 	}
-
-	cb0 := callbacks[0]
-	if err := chainNode(ctx0, cb0, backend0); err != nil {
+	if err := chainNode(ctx0, callbacks[0], backend0); err != nil {
 		return nil, err
 	}
 
 	// [1]: bk_log_cluster
 	//
 	// 聚类 signature 字段写入 与原始日志数据共享同一个后端 ES
-	backend0, err = buildBackend(ctx0, &fields.RawES)
+	ctx1 := context.WithoutCancel(ctx)
+	ctx1 = config.ResultTableConfigIntoContext(ctx1, pipeConfig.ResultTableList[0])
+	backend1, err := buildBackend(ctx1, &fields.RawES)
 	if err != nil {
 		return nil, err
 	}
 
 	// 日志聚类处理逻辑 需要构造一个虚拟的 fanout 后端 同时写入两个 ES
-	ctx1 := context.WithoutCancel(ctx)
-	ctx1 = config.ResultTableConfigIntoContext(ctx1, pipeConfig.ResultTableList[1])
+	ctx2 := context.WithoutCancel(ctx)
+	ctx2 = config.ResultTableConfigIntoContext(ctx2, pipeConfig.ResultTableList[1])
 
 	// pattern 表写入 signature/pattern 字段
-	backend1, err := buildBackend(ctx1, &fields.PatternES)
+	backend2, err := buildBackend(ctx2, &fields.PatternES)
 	if err != nil {
 		return nil, err
 	}
 
-	chainBackend := NewChainConnector(ctx0, []Node{backend0, backend1})
+	chainBackend := NewChainConnector(ctx1, []Node{backend1, backend2})
 	// 这里只能使用 ctx0 中的 rtfields 进行清洗 确保跟原始清洗逻辑一致
-	cb1 := callbacks[1]
-	if err := chainNode(ctx0, cb1, chainBackend); err != nil {
+	if err := chainNode(ctx1, callbacks[1], chainBackend); err != nil {
 		return nil, err
 	}
 
