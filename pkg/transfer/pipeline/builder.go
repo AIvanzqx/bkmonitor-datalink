@@ -645,7 +645,7 @@ func (b *ConfigBuilder) getBackendFields(rtOpts map[string]interface{}) BackendF
 	return conf
 }
 
-func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...ContextBuilderBranchingCallback) (*Pipeline, error) {
+func (b *ConfigBuilder) BuildBranchingForLogClusterV2(from Node, callbacks ...ContextBuilderBranchingCallback) (*Pipeline, error) {
 	ctx := b.ctx
 
 	// 当关闭日志聚类时 回退到正常的日志清洗分支
@@ -774,6 +774,130 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	chainBackend := NewChainConnector(ctx1, []Node{backend1, backend2})
 	// 这里只能使用 ctx0 中的 rtfields 进行清洗 确保跟原始清洗逻辑一致
 	if err := chainNode(ctx1, callbacks[1], chainBackend); err != nil {
+		return nil, err
+	}
+
+	logging.Debugf("pipeline %v layout: %v", pipeConfig.DataID, b)
+	return b.Finish()
+}
+
+func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...ContextBuilderBranchingCallback) (*Pipeline, error) {
+	ctx := b.ctx
+
+	// 当关闭日志聚类时 回退到正常的日志清洗分支
+	// callbacks[0] : bk_flat_batch
+	// callbacks[1] : bk_log_cluster
+	pipeConfig := config.PipelineConfigFromContext(ctx)
+	pipeOpts := utils.NewMapHelper(pipeConfig.Option)
+	isLogCluster, _ := pipeOpts.GetBool(config.PipelineConfigOptIsLogCluster)
+	if !isLogCluster {
+		pipeConfig.ResultTableList = pipeConfig.ResultTableList[:1] // 避免写入两个 ES
+		config.PipelineConfigIntoContext(b.ctx, pipeConfig)
+		return b.BuildBranching(from, true, callbacks[0])
+	}
+
+	conf := config.FromContext(ctx)
+	strictMode := conf.GetBool(define.ConfPipelineStrictMode)
+	fields := b.getBackendFields(pipeConfig.Option)
+
+	// 日志聚类会从单个数据源派生出多个分支
+	// 但此流程只会在内部处理 共用同一个数据源
+	if from == nil {
+		if b.frontend == nil {
+			b.SetupFrontend()
+		}
+		from = b.frontend
+	}
+
+	if len(pipeConfig.ResultTableList) == 0 {
+		return nil, errors.Wrapf(define.ErrOperationForbidden, "result table is empty")
+	}
+
+	// 日志聚类必须保证两个 ES backend (raw/pattern)
+	if len(pipeConfig.ResultTableList) != 2 {
+		return nil, errors.Wrapf(define.ErrOperationForbidden, "result table missing")
+	}
+
+	// 初始化 pipeline 配置
+	if b.PipeConfigInitFn != nil {
+		b.PipeConfigInitFn(pipeConfig)
+	}
+
+	buildBackend := func(subCtx context.Context, f *define.ETLRecordFields) (Node, error) {
+		rt := config.ResultTableConfigFromContext(subCtx)
+		backend, err := b.GetBackendByContextFields(subCtx, f)
+		if err != nil {
+			if strictMode {
+				return nil, errors.Wrapf(err, "get result table %s backend failed", rt.ResultTable)
+			}
+			logging.Warnf("get result table %s backend error %v", rt.ResultTable, err)
+			return nil, nil // 非严格模式下忽略此错误
+		}
+		return backend, nil
+	}
+
+	chainNode := func(subCtx context.Context, cb ContextBuilderBranchingCallback, backend Node) error {
+		var passer Node
+		var err error
+
+		rt := config.ResultTableConfigFromContext(subCtx)
+		multiNum := rt.MultiNum
+		multiNum = GetPipeLineNum(pipeConfig.DataID)
+		if multiNum > 1 {
+			passer, err = b.DataProcessor(subCtx, "passer")
+			if err != nil {
+				return err
+			}
+			passer.SetNoCopy(true)
+			b.Connect(from, passer)
+			backend = NewFanInConnector(subCtx, backend)
+		} else {
+			passer = from
+		}
+
+		for index := 0; index < multiNum; index++ {
+			runtimeConfig := new(config.RuntimeConfig)
+			runtimeConfig.PipelineCount = index
+			runtimeCtx := config.RuntimeConfigIntoContext(subCtx, runtimeConfig)
+
+			err = cb(runtimeCtx, passer, backend)
+			if err != nil {
+				if strictMode {
+					return errors.Wrapf(err, "create branching by %s failed", rt.ResultTable)
+				}
+				// 非严格模式下忽略此错误
+				logging.Warnf("create etl data processor %s error %v", rt.ResultTable, err)
+			}
+		}
+		return nil
+	}
+
+	passer, err := b.DataProcessor(ctx, "passer")
+	if err != nil {
+		return nil, err
+	}
+	passer.SetNoCopy(false)
+
+	fanout := NewFanOutConnector(ctx, passer)
+	ctx0 := config.ResultTableConfigIntoContext(ctx, pipeConfig.ResultTableList[0])
+	backend0, err := buildBackend(ctx0, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := fanout.ConnectTo(backend0); err != nil {
+		return nil, err
+	}
+
+	ctx1 := config.ResultTableConfigIntoContext(ctx, pipeConfig.ResultTableList[1])
+	backend1, err := buildBackend(ctx1, &fields.RawES)
+	if err != nil {
+		return nil, err
+	}
+	if err := fanout.ConnectTo(backend1); err != nil {
+		return nil, err
+	}
+
+	if err := chainNode(ctx, callbacks[1], fanout); err != nil {
 		return nil, err
 	}
 
