@@ -700,10 +700,17 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 		return backend, nil
 	}
 
-	chainNode := func(subCtx context.Context, cb ContextBuilderBranchingCallback, backends ...Node) error {
-		rt := config.ResultTableConfigFromContext(subCtx)
-		for i := 0; i < len(backends); i++ {
-			backend := backends[i]
+	type contextBackend struct {
+		ctx     context.Context
+		backend Node
+	}
+
+	chainNode := func(cb ContextBuilderBranchingCallback, ctxBackends ...contextBackend) error {
+		for i := 0; i < len(ctxBackends); i++ {
+			subCtx := ctxBackends[i].ctx
+			rt := config.ResultTableConfigFromContext(subCtx)
+			backend := ctxBackends[i].backend
+
 			var passer Node
 			var err error
 
@@ -716,7 +723,7 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 				}
 				passer.SetNoCopy(true)
 				b.Connect(from, passer)
-				backend = NewFanInConnector(ctx, backend)
+				backend = NewFanInConnector(subCtx, backend)
 			} else {
 				passer = from
 			}
@@ -751,7 +758,8 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	if err != nil {
 		return nil, err
 	}
-	if err := chainNode(ctx0, cb0, backend0); err != nil {
+
+	if err := chainNode(cb0, contextBackend{ctx: ctx0, backend: backend0}); err != nil {
 		return nil, err
 	}
 
@@ -774,7 +782,7 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	}
 
 	// 这里只能使用 ctx0 中的 rtfields 进行清洗 确保跟原始清洗逻辑一致
-	if err := chainNode(ctx0, cb1, backend0, backend1); err != nil {
+	if err := chainNode(cb1, contextBackend{ctx: ctx0, backend: backend0}, contextBackend{ctx: ctx1, backend: backend1}); err != nil {
 		return nil, err
 	}
 
