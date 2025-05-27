@@ -757,8 +757,8 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	// 日志聚类处理逻辑 需要构造一个虚拟的 fanout 后端 同时写入两个 ES
 	rt1 := pipeConfig.ResultTableList[1]
 	cb1 := callbacks[1]
-	ctx1 := config.ResultTableConfigIntoContext(ctx, rt0)  // 这里也需要复用 ctx0 的 rt fields
-	backend0, err = buildBackend(ctx1, rt0, &fields.RawES) // 聚类结构与原始日志数据共享同一个后端 ES
+	ctx1 := config.ResultTableConfigIntoContext(ctx, rt1)  // 这里也需要复用 ctx0 的 rt fields
+	backend0, err = buildBackend(ctx0, rt0, &fields.RawES) // 聚类结构与原始日志数据共享同一个后端 ES
 	if err != nil {
 		return nil, err
 	}
@@ -767,7 +767,7 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 		return nil, err
 	}
 
-	if err := chainNode(ctx1, rt1, cb1, backend0, backend1); err != nil {
+	if err := chainNode(ctx0, rt0, cb1, backend0, backend1); err != nil {
 		return nil, err
 	}
 
