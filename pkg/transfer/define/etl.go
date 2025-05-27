@@ -13,10 +13,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/bufferpool"
 	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/bufferpool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/types"
 )
 
@@ -76,8 +76,10 @@ type ETLRecordFields struct {
 
 func (f *ETLRecordFields) Filter(record ETLRecord) ETLRecord {
 	newRecord := ETLRecord{
-		Time:     record.Time,
-		Exemplar: record.Exemplar,
+		Time:       record.Time,
+		Exemplar:   record.Exemplar,
+		Dimensions: make(map[string]interface{}),
+		Metrics:    make(map[string]interface{}),
 	}
 
 	for _, k := range f.Metrics {
