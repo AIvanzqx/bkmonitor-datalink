@@ -103,11 +103,9 @@ func (b *BulkHandler) Handle(ctx context.Context, payload define.Payload, killCh
 	}
 
 	if b.fields != nil {
-		logging.Errorf("mandotest: [1](%#v)", etlRecord)
+		//logging.Errorf("mandotest: [1](%#v)", etlRecord)
 		etlRecord = b.fields.Filter(etlRecord)
 		logging.Errorf("mandotest: [2](%#v)", etlRecord)
-	} else {
-		logging.Errorf("mandotest: nil??")
 	}
 	return &etlRecord, utils.ParseTimeStamp(*etlRecord.Time), true
 }
@@ -217,6 +215,8 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 			errs.Add(err)
 			continue
 		}
+
+		logging.Errorf("mandotest: backend %v render index for %#v index %v", b, record, index)
 
 		logging.Debugf("backend %v ready to flush record %#v to index %s", b, record, index)
 
