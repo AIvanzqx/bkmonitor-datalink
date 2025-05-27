@@ -230,9 +230,8 @@ func (p *LogCluster) doRequest(records []*define.ETLRecord) ([]*define.ETLRecord
 	}
 
 	for i := 0; i < len(records); i++ {
-		records[i].Dimensions["log_signature"] = r.Data[i].LogSignature
+		records[i].Dimensions["signature"] = r.Data[i].LogSignature
 		records[i].Dimensions["pattern"] = r.Data[i].Pattern
-		records[i].Dimensions["is_new"] = strconv.Itoa(r.Data[i].IsNew)
 	}
 	return records, nil
 }
