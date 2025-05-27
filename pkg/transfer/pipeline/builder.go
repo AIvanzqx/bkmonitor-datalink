@@ -700,41 +700,37 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 		return backend, nil
 	}
 
-	chainNode := func(subCtx context.Context, cb ContextBuilderBranchingCallback, backends ...Node) error {
-		for i := 0; i < len(backends); i++ {
-			rt := config.ResultTableConfigFromContext(subCtx)
-			backend := backends[i]
+	chainNode := func(subCtx context.Context, cb ContextBuilderBranchingCallback, backend Node) error {
+		var passer Node
+		var err error
 
-			var passer Node
-			var err error
-
-			multiNum := rt.MultiNum
-			multiNum = GetPipeLineNum(pipeConfig.DataID)
-			if multiNum > 1 {
-				passer, err = b.DataProcessor(subCtx, "passer")
-				if err != nil {
-					return err
-				}
-				passer.SetNoCopy(true)
-				b.Connect(from, passer)
-				backend = NewFanInConnector(subCtx, backend)
-			} else {
-				passer = from
+		rt := config.ResultTableConfigFromContext(subCtx)
+		multiNum := rt.MultiNum
+		multiNum = GetPipeLineNum(pipeConfig.DataID)
+		if multiNum > 1 {
+			passer, err = b.DataProcessor(subCtx, "passer")
+			if err != nil {
+				return err
 			}
+			passer.SetNoCopy(true)
+			b.Connect(from, passer)
+			backend = NewFanInConnector(subCtx, backend)
+		} else {
+			passer = from
+		}
 
-			for index := 0; index < multiNum; index++ {
-				runtimeConfig := new(config.RuntimeConfig)
-				runtimeConfig.PipelineCount = index
-				runtimeCtx := config.RuntimeConfigIntoContext(subCtx, runtimeConfig)
+		for index := 0; index < multiNum; index++ {
+			runtimeConfig := new(config.RuntimeConfig)
+			runtimeConfig.PipelineCount = index
+			runtimeCtx := config.RuntimeConfigIntoContext(subCtx, runtimeConfig)
 
-				err = cb(runtimeCtx, passer, backend)
-				if err != nil {
-					if strictMode {
-						return errors.Wrapf(err, "create branching by %s failed", rt.ResultTable)
-					}
-					// 非严格模式下忽略此错误
-					logging.Warnf("create etl data processor %s error %v", rt.ResultTable, err)
+			err = cb(runtimeCtx, passer, backend)
+			if err != nil {
+				if strictMode {
+					return errors.Wrapf(err, "create branching by %s failed", rt.ResultTable)
 				}
+				// 非严格模式下忽略此错误
+				logging.Warnf("create etl data processor %s error %v", rt.ResultTable, err)
 			}
 		}
 		return nil
@@ -759,24 +755,26 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 
 	// [1]: bk_log_cluster
 	//
-	// 日志聚类处理逻辑 需要构造一个虚拟的 fanout 后端 同时写入两个 ES
-	ctx1 := context.WithoutCancel(ctx)
-	ctx1 = config.ResultTableConfigIntoContext(ctx1, pipeConfig.ResultTableList[1])
-
 	// 聚类 signature 字段写入 与原始日志数据共享同一个后端 ES
 	backend0, err = buildBackend(ctx0, &fields.RawES)
 	if err != nil {
 		return nil, err
 	}
+
+	// 日志聚类处理逻辑 需要构造一个虚拟的 fanout 后端 同时写入两个 ES
+	ctx1 := context.WithoutCancel(ctx)
+	ctx1 = config.ResultTableConfigIntoContext(ctx1, pipeConfig.ResultTableList[1])
+
 	// pattern 表写入 signature/pattern 字段
 	backend1, err := buildBackend(ctx1, &fields.PatternES)
 	if err != nil {
 		return nil, err
 	}
 
+	chainBackend := NewChainConnector(ctx0, []Node{backend0, backend1})
 	// 这里只能使用 ctx0 中的 rtfields 进行清洗 确保跟原始清洗逻辑一致
 	cb1 := callbacks[1]
-	if err := chainNode(ctx0, cb1, backend0, backend1); err != nil {
+	if err := chainNode(ctx0, cb1, chainBackend); err != nil {
 		return nil, err
 	}
 
