@@ -63,7 +63,6 @@ func (c LogClusterConfig) GetPollInterval() time.Duration {
 }
 
 func (c LogClusterConfig) GetBatchSize() int {
-	return 1
 	if c.BatchSize <= 0 {
 		return 1000
 	}
@@ -112,6 +111,12 @@ type LogClusterResponse struct {
 }
 
 func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
+	// 未初始话时透传即可
+	if p.queue == nil {
+		outputChan <- d
+		return
+	}
+
 	p.mut.Lock() // 此 processor 会触发虚拟的 Process 事件 即有可能并发调用的情况 因此这里需要有个锁保护
 	defer p.mut.Unlock()
 
@@ -225,37 +230,48 @@ func (p *LogCluster) doRequest(records []*define.ETLRecord) ([]*define.ETLRecord
 	for i := 0; i < len(records); i++ {
 		records[i].Dimensions["log_signature"] = r.Data[i].LogSignature
 		records[i].Dimensions["pattern"] = r.Data[i].Pattern
-		records[i].Dimensions["__is_new"] = strconv.Itoa(r.Data[i].IsNew)
+		records[i].Dimensions["is_new"] = strconv.Itoa(r.Data[i].IsNew)
 	}
 	return records, nil
 }
 
 func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
 	rtOption := config.PipelineConfigFromContext(ctx).Option
-	v, ok := rtOption["log_cluster_config"]
-	if !ok {
-		return nil, nil
-	}
-	obj, ok := v.(map[string]interface{})
-	if !ok {
-		return nil, nil
+	unmarshal := func() (*LogClusterConfig, error) {
+		v, ok := rtOption["log_cluster_config"]
+		if !ok {
+			return nil, nil
+		}
+		obj, ok := v.(map[string]interface{})
+		if !ok {
+			return nil, nil
+		}
+
+		var conf LogClusterConfig
+		err := mapstructure.Decode(obj["log_cluster"], &conf)
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = url.Parse(conf.Address)
+		if err != nil {
+			return nil, err
+		}
+		return &conf, nil
 	}
 
-	var conf LogClusterConfig
-	err := mapstructure.Decode(obj["log_cluster"], &conf)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = url.Parse(conf.Address)
-	if err != nil {
-		return nil, err
+	conf, err := unmarshal()
+	if err != nil || conf == nil {
+		return &LogCluster{
+			BaseDataProcessor: define.NewBaseDataProcessor(name),
+			ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, config.PipelineConfigFromContext(ctx)),
+		}, nil
 	}
 
 	p := &LogCluster{
 		BaseDataProcessor: define.NewBaseDataProcessor(name),
 		ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, config.PipelineConfigFromContext(ctx)),
-		conf:              conf,
+		conf:              *conf,
 		queue: &innerQueue{
 			size: conf.GetBatchSize(),
 		},

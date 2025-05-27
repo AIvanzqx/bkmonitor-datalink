@@ -31,6 +31,10 @@ type LogFilter struct {
 }
 
 func (p *LogFilter) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
+	if len(p.rules) == 0 {
+		outputChan <- d
+	}
+	
 	var dst define.ETLRecord
 	if err := d.To(&dst); err != nil {
 		p.CounterFails.Inc()
@@ -54,29 +58,40 @@ func (p *LogFilter) Process(d define.Payload, outputChan chan<- define.Payload, 
 
 func NewLogFilter(ctx context.Context, name string) (*LogFilter, error) {
 	rtOption := config.PipelineConfigFromContext(ctx).Option
-	obj, ok := rtOption["log_cluster_config"]
-	if !ok {
-		return nil, nil
-	}
-	conf, ok := obj.(map[string]interface{})
-	if !ok {
-		return nil, nil
-	}
+	unmarshal := func() ([]*utils.MatchRule, error) {
+		obj, ok := rtOption["log_cluster_config"]
+		if !ok {
+			return nil, nil
+		}
+		conf, ok := obj.(map[string]interface{})
+		if !ok {
+			return nil, nil
+		}
 
-	var rules []*utils.MatchRule
-	err := mapstructure.Decode(conf["log_filter"], &rules)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(rules) == 0 {
-		return nil, nil
-	}
-
-	for i := 0; i < len(rules); i++ {
-		if err := rules[i].Init(); err != nil {
+		var rules []*utils.MatchRule
+		err := mapstructure.Decode(conf["log_filter"], &rules)
+		if err != nil {
 			return nil, err
 		}
+
+		if len(rules) == 0 {
+			return nil, nil
+		}
+
+		for i := 0; i < len(rules); i++ {
+			if err := rules[i].Init(); err != nil {
+				return nil, err
+			}
+		}
+		return rules, nil
+	}
+
+	rules, err := unmarshal()
+	if err != nil || len(rules) == 0 {
+		return &LogFilter{
+			BaseDataProcessor: define.NewBaseDataProcessor(name),
+			ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, config.PipelineConfigFromContext(ctx)),
+		}, nil
 	}
 
 	return &LogFilter{

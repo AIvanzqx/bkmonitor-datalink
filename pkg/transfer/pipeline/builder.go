@@ -517,9 +517,6 @@ func (b *ConfigBuilder) GetDataProcessors(ctx context.Context, processors ...str
 		if err != nil {
 			return nil, err
 		}
-		if processor == nil {
-			continue
-		}
 		nodes = append(nodes, processor)
 	}
 	return nodes, nil
