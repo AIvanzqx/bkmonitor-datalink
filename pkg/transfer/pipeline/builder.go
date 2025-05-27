@@ -687,7 +687,8 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 		b.PipeConfigInitFn(pipeConfig)
 	}
 
-	buildBackend := func(subCtx context.Context, rt *config.MetaResultTableConfig, f *define.ETLRecordFields) (Node, error) {
+	buildBackend := func(subCtx context.Context, f *define.ETLRecordFields) (Node, error) {
+		rt := config.ResultTableConfigFromContext(subCtx)
 		backend, err := b.GetBackendByContextFields(subCtx, f)
 		if err != nil {
 			if strictMode {
@@ -699,7 +700,8 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 		return backend, nil
 	}
 
-	chainNode := func(subCtx context.Context, rt *config.MetaResultTableConfig, cb ContextBuilderBranchingCallback, backends ...Node) error {
+	chainNode := func(subCtx context.Context, cb ContextBuilderBranchingCallback, backends ...Node) error {
+		rt := config.ResultTableConfigFromContext(subCtx)
 		for i := 0; i < len(backends); i++ {
 			backend := backends[i]
 			var passer Node
@@ -740,39 +742,39 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	// [0]: bk_flat_batch
 	//
 	// 兼容原先的 flat_batch 处理逻辑
-	rt0 := pipeConfig.ResultTableList[0]
-	ctx0 := config.ResultTableConfigIntoContext(ctx, rt0)
+	ctx0 := context.WithoutCancel(ctx)
+	ctx0 = config.ResultTableConfigIntoContext(ctx0, pipeConfig.ResultTableList[0])
 	cb0 := callbacks[0]
 
 	// 原始表数据写入 不需要处理 recordfields
-	backend0, err := buildBackend(ctx0, rt0, nil)
+	backend0, err := buildBackend(ctx0, nil)
 	if err != nil {
 		return nil, err
 	}
-	if err := chainNode(ctx0, rt0, cb0, backend0); err != nil {
+	if err := chainNode(ctx0, cb0, backend0); err != nil {
 		return nil, err
 	}
 
 	// [1]: bk_log_cluster
 	//
 	// 日志聚类处理逻辑 需要构造一个虚拟的 fanout 后端 同时写入两个 ES
-	rt1 := pipeConfig.ResultTableList[1]
+	ctx1 := context.WithoutCancel(ctx)
+	ctx1 = config.ResultTableConfigIntoContext(ctx1, pipeConfig.ResultTableList[1])
 	cb1 := callbacks[1]
-	ctx1 := config.ResultTableConfigIntoContext(ctx, rt1)
 
 	// 聚类 signature 字段写入 与原始日志数据共享同一个后端 ES
-	backend0, err = buildBackend(ctx0, rt0, &fields.RawES)
+	backend0, err = buildBackend(ctx0, &fields.RawES)
 	if err != nil {
 		return nil, err
 	}
 	// pattern 表写入 signature/pattern 字段
-	backend1, err := buildBackend(ctx1, rt1, &fields.PatternES)
+	backend1, err := buildBackend(ctx1, &fields.PatternES)
 	if err != nil {
 		return nil, err
 	}
 
 	// 这里只能使用 ctx0 中的 rtfields 进行清洗 确保跟原始清洗逻辑一致
-	if err := chainNode(ctx0, rt0, cb1, backend0, backend1); err != nil {
+	if err := chainNode(ctx0, cb1, backend0, backend1); err != nil {
 		return nil, err
 	}
 
