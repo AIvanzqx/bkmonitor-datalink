@@ -132,7 +132,13 @@ func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload,
 		}
 
 		for _, record := range rsp {
-			output, err := define.DerivePayload(d, &record)
+			var output define.Payload
+			if d == nil {
+				output = define.NewDefaultPayload()
+				err = output.From(&record)
+			} else {
+				output, err = define.DerivePayload(d, &record)
+			}
 			if err != nil {
 				logging.Errorf("%v create payload from %v error: %+v", p, d, err)
 				continue
