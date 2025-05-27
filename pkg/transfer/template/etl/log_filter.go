@@ -69,6 +69,10 @@ func NewLogFilter(ctx context.Context, name string) (*LogFilter, error) {
 		return nil, err
 	}
 
+	if len(rules) == 0 {
+		return nil, nil
+	}
+
 	for i := 0; i < len(rules); i++ {
 		if err := rules[i].Init(); err != nil {
 			return nil, err
