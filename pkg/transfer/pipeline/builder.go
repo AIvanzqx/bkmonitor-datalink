@@ -630,18 +630,19 @@ type BackendFields struct {
 }
 
 // getBackendFields 调用方需要自行判断其属性是否为空
-func (b *ConfigBuilder) getBackendFields(opts map[string]interface{}) BackendFields {
-	conf, ok := opts[config.PipelineConfigOptLogClusterConfig]
+func (b *ConfigBuilder) getBackendFields(rtOpts map[string]interface{}) BackendFields {
+	var conf BackendFields
+	v, ok := rtOpts[config.PipelineConfigOptLogClusterConfig]
 	if !ok {
-		return BackendFields{}
+		return conf
+	}
+	obj, ok := v.(map[string]interface{})
+	if !ok {
+		return conf
 	}
 
-	type T struct {
-		BackendFields BackendFields `json:"backend_fields"`
-	}
-	var t T
-	_ = mapstructure.Decode(conf, &t)
-	return t.BackendFields
+	_ = mapstructure.Decode(obj["backend_fields"], &conf)
+	return conf
 }
 
 func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...ContextBuilderBranchingCallback) (*Pipeline, error) {
@@ -662,6 +663,7 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	conf := config.FromContext(ctx)
 	strictMode := conf.GetBool(define.ConfPipelineStrictMode)
 	fields := b.getBackendFields(pipeConfig.Option)
+	logging.Errorf("mandotest: getBackendFields")
 
 	// 日志聚类会从单个数据源派生出多个分支
 	// 但此流程只会在内部处理 共用同一个数据源

@@ -103,7 +103,11 @@ func (b *BulkHandler) Handle(ctx context.Context, payload define.Payload, killCh
 	}
 
 	if b.fields != nil {
+		logging.Errorf("mandotest: [1](%#v)", etlRecord)
 		etlRecord = b.fields.Filter(etlRecord)
+		logging.Errorf("mandotest: [2](%#v)", etlRecord)
+	} else {
+		logging.Errorf("mandotest: nil??")
 	}
 	return &etlRecord, utils.ParseTimeStamp(*etlRecord.Time), true
 }
@@ -237,6 +241,9 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 }
 
 func (b *BulkHandler) SetETLRecordFields(f *define.ETLRecordFields) {
+	if f != nil {
+		logging.Errorf("mandotest: set fields: %#v", *f)
+	}
 	b.fields = f
 }
 
