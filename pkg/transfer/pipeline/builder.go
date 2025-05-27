@@ -751,7 +751,6 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	// 兼容原先的 flat_batch 处理逻辑
 	ctx0 := context.WithoutCancel(ctx)
 	ctx0 = config.ResultTableConfigIntoContext(ctx0, pipeConfig.ResultTableList[0])
-	cb0 := callbacks[0]
 
 	// 原始表数据写入 不需要处理 recordfields
 	backend0, err := buildBackend(ctx0, nil)
@@ -759,6 +758,7 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 		return nil, err
 	}
 
+	cb0 := callbacks[0]
 	if err := chainNode(cb0, contextBackend{ctx: ctx0, backend: backend0}); err != nil {
 		return nil, err
 	}
@@ -768,7 +768,6 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	// 日志聚类处理逻辑 需要构造一个虚拟的 fanout 后端 同时写入两个 ES
 	ctx1 := context.WithoutCancel(ctx)
 	ctx1 = config.ResultTableConfigIntoContext(ctx1, pipeConfig.ResultTableList[1])
-	cb1 := callbacks[1]
 
 	// 聚类 signature 字段写入 与原始日志数据共享同一个后端 ES
 	backend0, err = buildBackend(ctx0, &fields.RawES)
@@ -782,7 +781,8 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	}
 
 	// 这里只能使用 ctx0 中的 rtfields 进行清洗 确保跟原始清洗逻辑一致
-	if err := chainNode(cb1, contextBackend{ctx: ctx0, backend: backend0}, contextBackend{ctx: ctx1, backend: backend1}); err != nil {
+	cb1 := callbacks[1]
+	if err := chainNode(cb1, contextBackend{ctx: ctx0, backend: backend0}, contextBackend{ctx: ctx0, backend: backend1}); err != nil {
 		return nil, err
 	}
 
