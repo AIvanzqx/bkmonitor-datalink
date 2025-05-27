@@ -34,7 +34,7 @@ func (p *LogFilter) Process(d define.Payload, outputChan chan<- define.Payload, 
 	if len(p.rules) == 0 {
 		outputChan <- d
 	}
-	
+
 	var dst define.ETLRecord
 	if err := d.To(&dst); err != nil {
 		p.CounterFails.Inc()
@@ -87,11 +87,8 @@ func NewLogFilter(ctx context.Context, name string) (*LogFilter, error) {
 	}
 
 	rules, err := unmarshal()
-	if err != nil || len(rules) == 0 {
-		return &LogFilter{
-			BaseDataProcessor: define.NewBaseDataProcessor(name),
-			ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, config.PipelineConfigFromContext(ctx)),
-		}, nil
+	if err != nil {
+		logging.Errorf("failed to unmarshal logfilter config: %v", err)
 	}
 
 	return &LogFilter{

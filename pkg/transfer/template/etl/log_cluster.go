@@ -262,6 +262,7 @@ func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
 
 	conf, err := unmarshal()
 	if err != nil || conf == nil {
+		logging.Errorf("failed to unmarshal log_cluster config: %v", err)
 		return &LogCluster{
 			BaseDataProcessor: define.NewBaseDataProcessor(name),
 			ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, config.PipelineConfigFromContext(ctx)),
