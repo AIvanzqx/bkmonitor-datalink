@@ -102,12 +102,8 @@ type LogClusterRequest struct {
 }
 
 type LogClusterResponse struct {
-	Index        string `json:"__index__"`
-	ID           string `json:"__id__"`
-	GroupID      string `json:"__group_id__"`
-	LogSignature string `json:"log_signature"`
+	LogSignature string `json:"signature"`
 	Pattern      string `json:"pattern"`
-	IsNew        int    `json:"is_new"`
 }
 
 func (p *LogCluster) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
