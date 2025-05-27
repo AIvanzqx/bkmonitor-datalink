@@ -23,6 +23,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
+const (
+	nameLogFilter = "log_filter"
+)
+
 type LogFilter struct {
 	*define.BaseDataProcessor
 	*define.ProcessorMonitor
@@ -59,7 +63,7 @@ func (p *LogFilter) Process(d define.Payload, outputChan chan<- define.Payload, 
 func NewLogFilter(ctx context.Context, name string) (*LogFilter, error) {
 	rtOption := config.PipelineConfigFromContext(ctx).Option
 	unmarshal := func() ([]*utils.MatchRule, error) {
-		obj, ok := rtOption["log_cluster_config"]
+		obj, ok := rtOption[config.PipelineConfigOptLogClusterConfig]
 		if !ok {
 			return nil, nil
 		}
@@ -69,7 +73,7 @@ func NewLogFilter(ctx context.Context, name string) (*LogFilter, error) {
 		}
 
 		var rules []*utils.MatchRule
-		err := mapstructure.Decode(conf["log_filter"], &rules)
+		err := mapstructure.Decode(conf[nameLogFilter], &rules)
 		if err != nil {
 			return nil, err
 		}
@@ -99,7 +103,7 @@ func NewLogFilter(ctx context.Context, name string) (*LogFilter, error) {
 }
 
 func init() {
-	define.RegisterDataProcessor("log_filter", func(ctx context.Context, name string) (processor define.DataProcessor, e error) {
+	define.RegisterDataProcessor(nameLogFilter, func(ctx context.Context, name string) (processor define.DataProcessor, e error) {
 		pipeConfig := config.PipelineConfigFromContext(ctx)
 		if pipeConfig == nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "pipeline config is empty")

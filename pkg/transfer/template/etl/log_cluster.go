@@ -30,6 +30,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 )
 
+const (
+	nameLogCluster = "log_cluster"
+)
+
 type LogClusterConfig struct {
 	Address      string `mapstructure:"address" json:"address"`
 	Timeout      string `mapstructure:"timeout" json:"timeout"`
@@ -241,7 +245,7 @@ func (p *LogCluster) doRequest(records []*define.ETLRecord) ([]*define.ETLRecord
 func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
 	rtOption := config.PipelineConfigFromContext(ctx).Option
 	unmarshal := func() (*LogClusterConfig, error) {
-		v, ok := rtOption["log_cluster_config"]
+		v, ok := rtOption[config.PipelineConfigOptLogClusterConfig]
 		if !ok {
 			return nil, nil
 		}
@@ -251,7 +255,7 @@ func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
 		}
 
 		var conf LogClusterConfig
-		err := mapstructure.Decode(obj["log_cluster"], &conf)
+		err := mapstructure.Decode(obj[nameLogCluster], &conf)
 		if err != nil {
 			return nil, err
 		}
@@ -281,6 +285,10 @@ func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
 		},
 		cli: &http.Client{
 			Timeout: conf.GetTimeout(),
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     time.Minute * 5,
+			},
 		},
 	}
 	p.SetPoll(conf.GetPollInterval())
@@ -288,7 +296,7 @@ func NewLogCluster(ctx context.Context, name string) (*LogCluster, error) {
 }
 
 func init() {
-	define.RegisterDataProcessor("log_cluster", func(ctx context.Context, name string) (processor define.DataProcessor, e error) {
+	define.RegisterDataProcessor(nameLogCluster, func(ctx context.Context, name string) (processor define.DataProcessor, e error) {
 		pipeConfig := config.PipelineConfigFromContext(ctx)
 		if pipeConfig == nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "pipeline config is empty")
