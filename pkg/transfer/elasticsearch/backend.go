@@ -105,7 +105,7 @@ func (b *BulkHandler) Handle(ctx context.Context, payload define.Payload, killCh
 	if b.fields != nil {
 		//logging.Errorf("mandotest: [1](%#v)", etlRecord)
 		etlRecord = b.fields.Filter(etlRecord)
-		logging.Errorf("mandotest: [2](%#v)", etlRecord)
+		//logging.Errorf("mandotest: [2](%#v)", etlRecord)
 	}
 	return &etlRecord, utils.ParseTimeStamp(*etlRecord.Time), true
 }
