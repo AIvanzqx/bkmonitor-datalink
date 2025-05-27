@@ -759,7 +759,7 @@ func (b *ConfigBuilder) BuildBranchingForLogCluster(from Node, callbacks ...Cont
 	rt1 := pipeConfig.ResultTableList[1]
 	cb1 := callbacks[1]
 	ctx1 := config.ResultTableConfigIntoContext(ctx, rt1)
-	backend0, err = buildBackend(ctx1, rt0, &fields.RawES) // 聚类结构与原始日志数据共享同一个后端 ES
+	backend0, err = buildBackend(ctx0, rt0, &fields.RawES) // 聚类结构与原始日志数据共享同一个后端 ES
 	if err != nil {
 		return nil, err
 	}
